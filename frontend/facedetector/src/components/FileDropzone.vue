@@ -1,15 +1,15 @@
 <template>
   <div class="dropzone" @dragover.prevent @drop.prevent="handleDrop">
     <input
-        type="file"
-        accept="video/mp4"
-        @change="handleFileChange"
-        style="display: none"
-        ref="fileInput"
+      type="file"
+      accept="video/mp4"
+      @change="handleFileChange"
+      style="display: none"
+      ref="fileInput"
     />
-    <button @click="openFileDialog" :disabled="uploading">Выберите файл</button>
-    <p>mp4 (до 1 ГБ)</p>
-    <p>или перетащите сюда</p>
+    <p class="file-hint">mp4 (до 1 ГБ)</p>
+    <button @click="openFileDialog" :disabled="uploading" class="select-button">📂 Выберите файл</button>
+    <p class="or-text">или перетащите сюда</p>
     <UploadProgress v-if="uploading" :progress="progress" />
   </div>
 </template>
@@ -34,7 +34,7 @@ export default {
     async handleFileChange(event) {
       const file = event.target.files[0]
       if (!file || file.type !== 'video/mp4') {
-        this.$toast.error('Пожалуйста, выберите видео в формате MP4.')
+        this.$toast?.error('Пожалуйста, выберите видео в формате MP4.')
         return
       }
 
@@ -68,11 +68,43 @@ export default {
 
 <style scoped>
 .dropzone {
-  border: 2px dashed #007bff;
-  padding: 50px;
-  text-align: center;
+  border: 2px dashed #c3c9f7;
+  background-color: #4664e9;
+  color: white;
+  border-radius: 16px;
+  padding: 60px 20px;
+  max-width: 700px;
+  margin: 0 auto;
+  transition: background-color 0.3s ease;
+}
+
+.dropzone:hover {
+  background-color: #3c59d1;
+}
+
+.file-hint {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.select-button {
+  background-color: white;
+  color: #000;
+  border: none;
+  padding: 10px 16px;
+  font-weight: 500;
+  border-radius: 8px;
+  margin-bottom: 8px;
   cursor: pointer;
-  margin: 20px auto;
-  max-width: 500px;
+  transition: background 0.3s ease;
+}
+
+.select-button:hover {
+  background-color: #f0f0f0;
+}
+
+.or-text {
+  font-size: 14px;
+  color: #e3e6fb;
 }
 </style>
