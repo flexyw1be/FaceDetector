@@ -1,54 +1,27 @@
 <template>
-<UploadPage/> 
-<RouterView/>
+  <div id="app">
+    <header>
+      <h1>Face Detector</h1>
+    </header>
+    <main>
+      <router-view />
+    </main>
+  </div>
 </template>
 
-<script>
-import { RouterView } from 'vue-router';
-import UploadPage from './views/UploadPage.vue';
-</script>
-
 <style>
-body {
-  margin: 0;
-  padding: 0;
-  background-color: #f3f6fd;
-}
-
 #app {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: Avenir, Helvetica, Arial, sans-serif;
   text-align: center;
   color: #2c3e50;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
+  margin-top: 20px;
 }
-
 header {
-  display: flex;
-  align-items: center;
-  padding: 20px;
-  background-color: #ffffff;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  padding: 10px;
+  background: #f0f0f0;
+  border-bottom: 1px solid #ddd;
 }
-
-header img {
-  height: 28px;
-  margin-right: 10px;
-}
-
-.logo-text {
-  font-weight: bold;
-  font-size: 16px;
-}
-
 main {
-  flex: 1;
-  padding: 40px 20px;
-}
-
-.main-title {
-  font-size: 24px;
-  margin-bottom: 30px;
+  padding: 20px;
 }
 </style>

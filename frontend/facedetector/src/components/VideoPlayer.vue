@@ -26,20 +26,16 @@ export default {
   },
   computed: {
     videoUrl() {
-      if (!this.videoPath) return '';
-      // Убедитесь, что URL полный
-      if (this.videoPath.startsWith('http')) {
-        return this.videoPath;
-      }
-      return `http://localhost:8000${this.videoPath}`;
+      if (!this.videoPath) return ''
+      return `http://localhost:8000${this.videoPath}`
     }
   },
   methods: {
     onLoaded() {
-      this.error = null;
+      this.error = null
     },
     onError() {
-      this.error = 'Ошибка загрузки видеопотока. Проверьте формат файла.';
+      this.error = 'Ошибка загрузки видеопотока. Проверьте формат файла.'
     }
   }
 }
