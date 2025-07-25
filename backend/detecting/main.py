@@ -1,6 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import cv2
 import os
 import uuid
@@ -90,6 +91,8 @@ def load_models():
 load_models()
 
 app = FastAPI(title="Face Detection API", debug=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/faces", StaticFiles(directory="faces"), name="faces")
 
 # Добавляем CORS middleware
 app.add_middleware(
@@ -283,29 +286,44 @@ def process_frame_for_detection(frame, frame_time, db: Session, video_id: str):
 
 @app.post("/upload-video/")
 async def upload_video(file: UploadFile = File(...)):
-    """Загрузка видео файла"""
-    global current_video_path, current_video_id
-
     try:
-        # Генерируем уникальное имя файла и ID видео
-        file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'mp4'
+        file_extension = file.filename.split('.')[-1].lower()
+        if file_extension not in ['mp4', 'avi', 'mov']:
+            raise HTTPException(status_code=400, detail="Unsupported video format")
+
         video_id = str(uuid.uuid4())
         filename = f"{video_id}.{file_extension}"
         filepath = os.path.join(UPLOAD_FOLDER, filename)
 
-        # Сохраняем файл
         with open(filepath, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
 
+        # Проверка: существует ли файл?
+        if not os.path.exists(filepath):
+            raise HTTPException(status_code=500, detail="File not saved")
+
+        # Проверка: можно ли открыть видео через OpenCV?
+        cap = cv2.VideoCapture(filepath)
+        if not cap.isOpened():
+            cap.release()
+            raise HTTPException(status_code=500, detail="Cannot open video with OpenCV - corrupted or incompatible")
+        cap.release()
+
+        global current_video_path, current_video_id
         current_video_path = filepath
-        current_video_id = video_id  # Сохраняем ID текущего видео
+        current_video_id = video_id
 
-        return {"filename": filename, "path": filepath, "video_id": video_id, "status": "success"}
-
+        return {
+            "filename": filename,
+            "video_id": video_id,
+            "path": f"/uploads/{filename}",  # важно: путь для фронтенда
+            "status": "success"
+        }
     except Exception as e:
         logger.error(f"Upload error: {e}")
-        raise HTTPException(status_code=500, detail=f"Upload error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.get("/process-video/")
