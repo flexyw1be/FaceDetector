@@ -1,48 +1,32 @@
 import { createRouter, createWebHistory } from 'vue-router'
-
 import UploadPage from '@/views/UploadPage.vue'
 import ProcessingPage from '@/views/ProcessingPage.vue'
 import ResultsPage from '@/views/ResultsPage.vue'
 
-const routes = [
-  { path: '/upload-video', name: 'UploadPage', component: UploadPage },
-  { path: '/', redirect: '/upload-video' },
-  { path: '/processing', name: 'Processing', component: ProcessingPage },
-  { path: '/results', name: 'Results', component: ResultsPage }
-]
-
-
+// Only ONE routes declaration
 const routes = [
   {
-    path: '/upload-video',
-    name: 'UploadPage',
+    path: '/',
+    name: 'Upload',
     component: UploadPage
   },
   {
-    path: '/',
-    redirect: '/upload-video' // ← Главная страница перенаправляет на /upload-video
-  },
-  {
-    path: '/processing',
+    path: '/process-video/:videoId',
     name: 'Processing',
-    component: ProcessingPage
+    component: ProcessingPage,
+    props: true
   },
   {
-    path: '/results',
+    path: '/results/:videoId',
     name: 'Results',
-    component: ResultsPage
-  },
-  {
-    path: '/face/:faceId',
-    name: 'FaceDetails',
-    component: FaceDetailsPage,
+    component: ResultsPage,
     props: true
   }
 ]
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes // Use the single routes array
 })
 
 export default router

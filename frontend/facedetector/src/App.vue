@@ -1,8 +1,5 @@
 <template>
   <div id="app">
-    <header>
-      <h1>Face Detector</h1>
-    </header>
     <main>
       <router-view />
     </main>

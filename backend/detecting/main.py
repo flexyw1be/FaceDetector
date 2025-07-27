@@ -1,6 +1,4 @@
-# main.py
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
-from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import cv2
@@ -13,22 +11,11 @@ import logging
 from sqlalchemy.orm import Session
 from datetime import datetime
 from models import get_db, Person, FaceDetection
+from deepface import DeepFace
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Импортируем insightface
-try:
-    import insightface
-    from insightface.app import FaceAnalysis
-
-    logger.info("InsightFace загружен успешно")
-except ImportError as e:
-    logger.error(f"Ошибка импорта insightface: {e}")
-    raise
-
-# Пути
 BASE_DIR = Path(__file__).parent
 MODELS_DIR = BASE_DIR / "ml_models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -37,74 +24,56 @@ FACES_FOLDER = "faces"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(FACES_FOLDER, exist_ok=True)
 
-# Пути к моделям OpenCV
 faceProto = str(MODELS_DIR / "opencv_face_detector.pbtxt")
 faceModel = str(MODELS_DIR / "opencv_face_detector_uint8.pb")
-genderProto = str(MODELS_DIR / "gender_deploy.prototxt")
-genderModel = str(MODELS_DIR / "gender_net.caffemodel")
-ageProto = str(MODELS_DIR / "age_deploy.prototxt")
-ageModel = str(MODELS_DIR / "age_net.caffemodel")
 
-# Глобальные переменные
 face_net = None
-gender_net = None
-age_net = None
 current_video_path = None
 current_video_id = None
 
-genderList = ['Male', 'Female']
-ageList = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
-MODEL_MEAN_VALUES = (78.4263377603, 87.7689143744, 114.895847746)
+
+def get_age_group(age):
+    age = int(age)
+    if age <= 2:
+        return "(0-2)"
+    elif 4 <= age <= 6:
+        return "(4-6)"
+    elif 8 <= age <= 12:
+        return "(8-12)"
+    elif 15 <= age <= 20:
+        return "(15-20)"
+    elif 25 <= age <= 32:
+        return "(25-32)"
+    elif 38 <= age <= 43:
+        return "(38-43)"
+    elif 48 <= age <= 53:
+        return "(48-53)"
+    else:
+        return "(60-100)"
 
 
-# Загрузка моделей OpenCV
 def load_models():
-    global face_net, gender_net, age_net
+    global face_net
     try:
         if os.path.exists(faceModel) and os.path.exists(faceProto):
             face_net = cv2.dnn.readNet(faceModel, faceProto)
             logger.info("Face detection model loaded")
         else:
             logger.warning("Face model not found")
-
-        if os.path.exists(genderModel) and os.path.exists(genderProto):
-            gender_net = cv2.dnn.readNet(genderModel, genderProto)
-            logger.info("Gender model loaded")
-        else:
-            logger.warning("Gender model not found")
-
-        if os.path.exists(ageModel) and os.path.exists(ageProto):
-            age_net = cv2.dnn.readNet(ageModel, ageProto)
-            logger.info("Age model loaded")
-        else:
-            logger.warning("Age model not found")
     except Exception as e:
         logger.error(f"Ошибка загрузки моделей OpenCV: {e}")
 
 
 load_models()
 
-# Инициализация InsightFace
-try:
-    # Инициализация модели детекции лиц
-    face_app = FaceAnalysis(name='buffalo_s', root='./insightface_models')
-    face_app.prepare(ctx_id=0, det_size=(640, 640))
-    logger.info("InsightFace model initialized")
-except Exception as e:
-    logger.error(f"Ошибка инициализации InsightFace: {e}")
-    raise
-
-# Создание приложения
 app = FastAPI(title="Face Detection API", debug=True)
 
-# Монтируем статику
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.mount("/faces", StaticFiles(directory="faces"), name="faces")
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5175"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -138,78 +107,139 @@ def highlight_face(net, frame, conf_threshold=0.5):
         return []
 
 
-def save_face_image_to_person_folder(frame, box, person_id, detection_id):
-    try:
-        x1, y1, x2, y2 = box
-        h, w = frame.shape[:2]
-        expand = 0.3
-        new_x1 = max(0, x1 - int((x2 - x1) * expand))
-        new_y1 = max(0, y1 - int((y2 - y1) * expand))
-        new_x2 = min(w, x2 + int((x2 - x1) * expand))
-        new_y2 = min(h, y2 + int((y2 - y1) * expand))
-        face_region = frame[new_y1:new_y2, new_x1:new_x2]
-        if face_region.size == 0:
-            return None
-
-        person_folder = os.path.join(FACES_FOLDER, f"person_{person_id}")
-        os.makedirs(person_folder, exist_ok=True)
-
-        filename = f"detection_{detection_id}.jpg"
-        path = os.path.join(person_folder, filename)
-
-        cv2.rectangle(face_region, (int((x2 - x1) * expand), int((y2 - y1) * expand)),
-                      (int((x2 - x1) * expand) + (x2 - x1), int((y2 - y1) * expand) + (y2 - y1)),
-                      (0, 255, 0), 2)
-        cv2.imwrite(path, face_region)
-        return f"/faces/person_{person_id}/{filename}"
-    except Exception as e:
-        logger.error(f"Ошибка сохранения: {e}")
-        return None
-
-
 def get_face_embedding(face):
-    rgb_face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
-    faces = face_app.get(rgb_face)
-    return faces[0].embedding if len(faces) > 0 else None
+    try:
+        rgb_face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+
+        embedding_obj = DeepFace.represent(
+            img_path=rgb_face,
+            model_name='Facenet',
+            enforce_detection=False
+        )
+
+        if isinstance(embedding_obj, list):
+            if len(embedding_obj) > 0:
+                return np.array(embedding_obj[0]['embedding'])
+            return None
+        elif isinstance(embedding_obj, dict):
+            return np.array(embedding_obj['embedding'])
+        return None
+    except Exception as e:
+        logger.error(f"Error in get_face_embedding: {e}")
+        return None
 
 
 def compare_faces(embedding1, embedding2, threshold=0.6):
     if embedding1 is None or embedding2 is None:
         return False
-    similarity = np.dot(embedding1, embedding2) / (np.linalg.norm(embedding1) * np.linalg.norm(embedding2))
-    return similarity > (1 - threshold)
+
+    try:
+        emb1 = np.array(embedding1)
+        emb2 = np.array(embedding2)
+
+        similarity = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
+
+        return similarity > (1 - threshold)
+    except Exception as e:
+        logger.error(f"Error in compare_faces: {e}")
+        return False
+
+
+def save_face_image_to_person_folder(frame, box, person_id, detection_id):
+    try:
+        x1, y1, x2, y2 = box
+        h, w = frame.shape[:2]
+
+        expand = 0.3
+        new_x1 = max(0, x1 - int((x2 - x1) * expand))
+        new_y1 = max(0, y1 - int((y2 - y1) * expand))
+        new_x2 = min(w, x2 + int((x2 - x1) * expand))
+        new_y2 = min(h, y2 + int((y2 - y1) * expand))
+
+        face_region = frame[new_y1:new_y2, new_x1:new_x2]
+        if face_region.size == 0:
+            logger.warning("Пустая область лица для сохранения")
+            return None
+
+        person_folder = os.path.join(FACES_FOLDER, f"person_{person_id}")
+        os.makedirs(person_folder, exist_ok=True)
+
+        filename = f"face_{detection_id}.jpg"
+        face_path = os.path.join(BASE_DIR, FACES_FOLDER, f"person_{person_id}", filename)
+
+        os.makedirs(os.path.dirname(face_path), exist_ok=True)
+
+        success = cv2.imwrite(face_path, face_region, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        if not success:
+            logger.error(f"Не удалось сохранить изображение по пути: {face_path}")
+            return None
+
+        relative_path = f"faces/person_{person_id}/{filename}"  # Убрали начальный слэш
+        logger.info(f"Сохранено лицо: {relative_path}")
+        return relative_path
+    except Exception as e:
+        logger.error(f"Ошибка сохранения лица: {str(e)}")
+        return None
 
 
 def process_frame_for_detection(frame, frame_time, db: Session, video_id: str):
     if face_net is None:
+        logger.error("Модель детекции лиц не загружена!")
         return []
+
     try:
-        boxes = highlight_face(face_net, frame, 0.3)
+        boxes = highlight_face(face_net, frame, 0.2)
         results = []
+
+        if not boxes:
+            logger.warning(f"На кадре {frame_time} не обнаружено лиц")
+            return []
+
+        logger.info(f"На кадре {frame_time} обнаружено {len(boxes)} лиц")
+
         for box in boxes:
             x1, y1, x2, y2 = box
             face = frame[y1:y2, x1:x2]
+
             if face.size == 0:
+                logger.warning("Обнаружено лицо нулевого размера")
                 continue
+
+            rgb_face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
 
             embedding = get_face_embedding(face)
             if embedding is None:
+                logger.warning("Не удалось получить embedding лица")
                 continue
 
             gender = "Unknown"
-            age = "Unknown"
-            if gender_net and age_net:
-                try:
-                    blob = cv2.dnn.blobFromImage(face, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
-                    gender_net.setInput(blob)
-                    gender = genderList[gender_net.forward().argmax()]
-                    age_net.setInput(blob)
-                    age = ageList[age_net.forward().argmax()]
-                except:
-                    pass
+            age_group = "Unknown"
+            try:
+                analysis = DeepFace.analyze(
+                    img_path=rgb_face,
+                    actions=['gender', 'age'],
+                    enforce_detection=False,
+                    detector_backend='opencv'
+                )
+
+                if isinstance(analysis, list):
+                    analysis = analysis[0]
+
+                if 'gender' in analysis:
+                    gender = max(analysis['gender'].items(), key=lambda x: x[1])[0]
+
+                if 'age' in analysis:
+                    age = analysis['age']
+                    age_group = get_age_group(age)
+
+                logger.info(f"DeepFace анализ: пол={gender}, возраст={age}, группа={age_group}")
+            except Exception as e:
+                logger.error(f"Ошибка DeepFace анализа: {e}")
+                db.rollback()
 
             similar_id = None
             persons = db.query(Person).filter(Person.video_id == video_id).all()
+
             for p in persons:
                 if p.face_encoding:
                     stored_embedding = np.frombuffer(p.face_encoding, dtype=np.float64)
@@ -217,47 +247,68 @@ def process_frame_for_detection(frame, frame_time, db: Session, video_id: str):
                         similar_id = p.id
                         p.last_seen = datetime.utcnow()
                         p.appearance_count += 1
-                        if not p.gender:
-                            p.gender = gender
-                        db.commit()
+                        try:
+                            db.commit()
+                            logger.info(f"Найдено совпадение с person_id: {similar_id}")
+                        except:
+                            db.rollback()
+                            logger.error("Ошибка при обновлении записи в БД")
                         break
 
             if similar_id is None:
                 new_person = Person(
                     face_encoding=embedding.tobytes(),
-                    gender=gender,
-                    age_group=age,
-                    video_id=video_id
+                    gender=str(gender),
+                    age_group=str(age_group),
+                    video_id=video_id,
+                    first_seen=datetime.utcnow(),
+                    last_seen=datetime.utcnow(),
+                    appearance_count=1
                 )
                 db.add(new_person)
-                db.commit()
-                db.refresh(new_person)
-                similar_id = new_person.id
+                try:
+                    db.commit()
+                    db.refresh(new_person)
+                    similar_id = new_person.id
+                    logger.info(f"Создан новый person_id: {similar_id}")
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"Ошибка при создании новой записи в БД: {e}")
+                    continue
 
             detection = FaceDetection(
                 person_id=similar_id,
                 frame_time=frame_time,
                 bounding_box=json.dumps(box),
-                gender=gender,
-                age_group=age,
+                gender=str(gender),
+                age_group=str(age_group),
                 video_id=video_id
             )
             db.add(detection)
-            db.commit()
-            db.refresh(detection)
+            try:
+                db.commit()
+                db.refresh(detection)
+            except:
+                db.rollback()
+                logger.error("Ошибка при сохранении обнаружения лица")
+                continue
 
             img_name = save_face_image_to_person_folder(frame, box, similar_id, detection.id)
+
             results.append({
                 "person_id": similar_id,
                 "box": box,
                 "gender": gender,
-                "age": age,
+                "age": age_group,
                 "frame_time": frame_time,
                 "face_image": img_name
             })
+
         return results
+
     except Exception as e:
-        logger.error(f"Ошибка обработки кадра: {e}")
+        logger.error(f"Критическая ошибка обработки кадра: {e}")
+        db.rollback()
         return []
 
 
@@ -293,26 +344,103 @@ async def upload_video(file: UploadFile = File(...)):
         raise HTTPException(500, str(e))
 
 
-@app.get("/process-video/")
-async def process_video(db: Session = Depends(get_db)):
+processing_status = {
+    "is_processing": False,
+    "progress": 0,
+    "current_video_id": None,
+    "message": ""
+}
+
+
+@app.post("/process-video/")
+async def start_process_video(db: Session = Depends(get_db)):
+    global processing_status, current_video_path, current_video_id
+
     if not current_video_path or not current_video_id:
         raise HTTPException(404, "No video uploaded")
-    if not os.path.exists(current_video_path):
-        raise HTTPException(404, "File not found")
-    cap = cv2.VideoCapture(current_video_path)
-    if not cap.isOpened():
-        raise HTTPException(500, "Cannot open video file")
-    frame_count = 0
-    max_frames = 30
-    while frame_count < max_frames:
-        success, frame = cap.read()
-        if not success:
-            break
-        time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
-        process_frame_for_detection(frame, time, db, current_video_id)
-        frame_count += 1
-    cap.release()
-    return {"message": "OK", "frames": frame_count, "video_id": current_video_id}
+
+    if processing_status["is_processing"]:
+        raise HTTPException(409, "Video processing already in progress")
+
+    processing_status["is_processing"] = True
+    processing_status["progress"] = 0
+    processing_status["current_video_id"] = current_video_id
+    processing_status["message"] = "Начало обработки..."
+
+    logger.info(f"Запущена обработка видео: {current_video_path}")
+
+    import threading
+    thread = threading.Thread(target=run_video_processing, args=(db,))
+    thread.start()
+
+    return {"message": "Video processing started", "video_id": current_video_id}
+
+
+def run_video_processing(db: Session):
+    global processing_status, current_video_path, current_video_id
+    try:
+        logger.info(f"Начало обработки видео в потоке: {current_video_path}")
+        if not os.path.exists(current_video_path):
+            logger.error(f"Файл не найден: {current_video_path}")
+            processing_status["message"] = "Файл не найден"
+            processing_status["is_processing"] = False
+            return
+
+        cap = cv2.VideoCapture(current_video_path)
+        if not cap.isOpened():
+            logger.error("Не удалось открыть видеофайл")
+            processing_status["message"] = "Не удалось открыть видеофайл"
+            processing_status["is_processing"] = False
+            return
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        duration = total_frames / fps if fps > 0 else 0
+        processing_rate_fps = 5
+        frame_interval = max(1, int(fps / processing_rate_fps)) if fps > 0 else 1
+        logger.info(f"Параметры видео: {total_frames} кадров, {fps} FPS, длительность: {duration:.2f} сек")
+
+        processed_frames = 0
+        frame_number = 0
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if total_frames > 0:
+                processing_status["progress"] = int((frame_number / total_frames) * 100)
+                processing_status["message"] = f"Обработка кадра {frame_number}/{total_frames}"
+
+            if frame_number % frame_interval == 0:
+                time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                logger.info(f"Обработка кадра {frame_number} (время: {time:.2f} сек)")
+                results = process_frame_for_detection(frame, time, db, current_video_id)
+                if results:
+                    logger.info(f"Найдено {len(results)} лиц на кадре {frame_number}")
+                processed_frames += 1
+            frame_number += 1
+
+        cap.release()
+        logger.info(f"Обработка завершена. Обработано {processed_frames} кадров")
+        processing_status["progress"] = 100
+        processing_status["message"] = "Обработка завершена"
+    except Exception as e:
+        logger.error(f"Ошибка во время обработки видео: {e}")
+        processing_status["message"] = f"Ошибка обработки: {str(e)}"
+    finally:
+        processing_status["is_processing"] = False
+
+
+@app.get("/process-video/status")
+async def get_processing_status():
+    global processing_status
+    return {
+        "is_processing": processing_status["is_processing"],
+        "progress": processing_status["progress"],
+        "video_id": processing_status["current_video_id"],
+        "message": processing_status["message"]
+    }
 
 
 @app.get("/results/")
@@ -325,7 +453,7 @@ async def get_results(db: Session = Depends(get_db)):
         data = []
         for p in persons:
             dets = [d for d in detections if d.person_id == p.id]
-            face_images = [f"/faces/person_{p.id}/detection_{d.id}.jpg" for d in dets]
+            face_images = [f"faces/person_{p.id}/face_{d.id}.jpg" for d in dets]
             data.append({
                 "person": {
                     "id": p.id,
@@ -343,7 +471,7 @@ async def get_results(db: Session = Depends(get_db)):
                         "bounding_box": json.loads(d.bounding_box),
                         "gender": d.gender,
                         "age_group": d.age_group,
-                        "face_image": f"/faces/person_{p.id}/detection_{d.id}.jpg"
+                        "face_image": f"faces/person_{p.id}/face_{d.id}.jpg"  # Убрали начальный слэш
                     }
                     for d in dets
                 ]
@@ -360,9 +488,7 @@ async def health():
         "status": "ok",
         "models": {
             "face_detection": face_net is not None,
-            "gender_detection": gender_net is not None,
-            "age_detection": age_net is not None,
-            "face_recognition": 'face_app' in globals()
+            "face_recognition": True
         }
     }
 
