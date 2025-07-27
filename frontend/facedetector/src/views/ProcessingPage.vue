@@ -34,23 +34,34 @@ export default {
   name: 'ProcessingPage',
   data() {
     return {
-      fileName: 'Загруженное видео', // Имя файла можно передать из предыдущего шага или получить из состояния
-      fileSize: 'Размер файла', // Аналогично
+      fileName: 'Загруженное видео',
+      fileSize: 'Размер файла',
       progress: 0,
       serverMessage: '',
       statusInterval: null
     }
   },
   async mounted() {
+    // Получаем данные о файле из параметров маршрута
+    if (this.$route.query.fileName) {
+      this.fileName = this.$route.query.fileName;
+    }
+    if (this.$route.query.fileSize) {
+      this.fileSize = this.formatFileSize(this.$route.query.fileSize);
+    }
+
     await this.startProcessing();
     this.pollProcessingStatus();
   },
-  beforeUnmount() {
-    if (this.statusInterval) {
-      clearInterval(this.statusInterval);
-    }
-  },
   methods: {
+    // Метод для форматирования размера файла
+    formatFileSize(bytes) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    },
     async startProcessing() {
       try {
         // Предполагаем, что video_id уже известен или был загружен ранее

@@ -3,3 +3,8 @@
 node_modules
 frontend/facedetector/node_modules
 frontend/facedetector/.vscode
+frontend/src
+frontend/node_modules
+frontend/facedetector/node_modules
+frontend/.idea
+frontend/_pycache
