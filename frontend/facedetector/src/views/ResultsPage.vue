@@ -6,18 +6,50 @@
         <p class="subtitle">Обнаружено {{ persons.length }} {{ pluralizePerson(persons.length) }}</p>
       </div>
 
+      <div v-if="error" class="error-message">
+        Ошибка загрузки данных: {{ error }}
+      </div>
+
+      <div v-if="loading" class="loading-message">
+        Загрузка данных...
+      </div>
+
       <div class="persons-grid">
-        <div v-for="(person, index) in persons" :key="person.id" class="person-card">
+        <div v-for="(person, index) in persons" :key="person.id || index" class="person-card">
           <div class="person-gallery">
-            <img
-                v-for="(img, idx) in person.face_images"
-                :key="idx"
-                :src="img"
-                :alt="`Человек ${index + 1}`"
-                class="person-image"
-                @click="openGallery(person.id, idx)"
-            >
+            <div class="main-image-container">
+              <img
+                  :src="getFirstImage(person)"
+                  :alt="`Человек ${index + 1}`"
+                  class="person-main-image"
+                  @click="openGallery(person.id || index, 0)"
+              >
+            </div>
+
+            <div v-if="person.face_images && person.face_images.length > 1" class="additional-images">
+              <button class="toggle-btn" @click="toggleGallery(person.id || index)">
+                <span>
+                  {{ isExpanded(person.id || index) ? 'Скрыть фото' : `Показать все фото (${person.face_images.length})` }}
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                       :style="{ transform: isExpanded(person.id || index) ? 'rotate(180deg)' : 'none' }">
+                    <path d="M6 9L12 15L18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </span>
+              </button>
+
+              <div v-show="isExpanded(person.id || index)" class="thumbnails-container">
+                <img
+                    v-for="(img, idx) in person.face_images.slice(1)"
+                    :key="idx"
+                    :src="img"
+                    :alt="`Человек ${index + 1} фото ${idx + 2}`"
+                    class="person-thumbnail"
+                    @click="openGallery(person.id || index, idx + 1)"
+                >
+              </div>
+            </div>
           </div>
+
           <div class="person-details">
             <h3>Человек {{ index + 1 }}</h3>
             <div class="person-stats">
@@ -39,7 +71,6 @@
       </div>
     </div>
 
-    <!-- Модальное окно для просмотра изображений -->
     <div v-if="galleryOpen" class="image-gallery-modal">
       <button class="close-btn" @click="galleryOpen = false">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -72,12 +103,15 @@ export default {
       persons: [],
       galleryOpen: false,
       currentGalleryImages: [],
-      currentGalleryIndex: 0
+      currentGalleryIndex: 0,
+      expandedPersons: new Set(),
+      loading: false,
+      error: null
     };
   },
   computed: {
     currentGalleryImage() {
-      return this.currentGalleryImages[this.currentGalleryIndex];
+      return this.currentGalleryImages[this.currentGalleryIndex] || '';
     }
   },
   async created() {
@@ -85,64 +119,73 @@ export default {
   },
   methods: {
     async loadResults() {
+      this.loading = true;
+      this.error = null;
       try {
         const response = await axios.get('http://localhost:8000/results/');
-        this.persons = response.data.persons || [];
+        this.persons = response.data.persons.map((person, index) => ({
+          ...person,
+          // Добавляем id если его нет
+          id: person.id || `person-${index}`,
+          face_images: person.face_images || []
+        }));
       } catch (error) {
         console.error('Error loading results:', error);
+        this.error = error.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    getFirstImage(person) {
+      return person.face_images?.[0] || '';
+    },
+
+    isExpanded(personId) {
+      return this.expandedPersons.has(personId);
+    },
+
+    toggleGallery(personId) {
+      if (this.expandedPersons.has(personId)) {
+        this.expandedPersons.delete(personId);
+      } else {
+        this.expandedPersons.add(personId);
       }
     },
 
     openGallery(personId, startIndex = 0) {
       const person = this.persons.find(p => p.id === personId);
-      if (person) {
+      if (person?.face_images?.length) {
         this.currentGalleryImages = person.face_images;
-        this.currentGalleryIndex = startIndex;
+        this.currentGalleryIndex = Math.min(startIndex, person.face_images.length - 1);
         this.galleryOpen = true;
       }
     },
 
     pluralizePerson(count) {
-      const lastDigit = count % 10;
-      const lastTwoDigits = count % 100;
-
-      if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
-        return 'человек';
+      if (count % 100 >= 11 && count % 100 <= 19) return 'человек';
+      switch(count % 10) {
+        case 1: return 'человек';
+        case 2:
+        case 3:
+        case 4: return 'человека';
+        default: return 'человек';
       }
-
-      if (lastDigit === 1) {
-        return 'человек';
-      }
-
-      if (lastDigit >= 2 && lastDigit <= 4) {
-        return 'человека';
-      }
-
-      return 'человек';
     },
 
     pluralizeAppearance(count) {
-      const lastDigit = count % 10;
-      const lastTwoDigits = count % 100;
-
-      if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
-        return 'раз';
+      if (count % 100 >= 11 && count % 100 <= 19) return 'раз';
+      switch(count % 10) {
+        case 1: return 'раз';
+        case 2:
+        case 3:
+        case 4: return 'раза';
+        default: return 'раз';
       }
-
-      if (lastDigit === 1) {
-        return 'раз';
-      }
-
-      if (lastDigit >= 2 && lastDigit <= 4) {
-        return 'раза';
-      }
-
-      return 'раз';
     },
 
     formatGender(gender) {
       if (!gender) return 'Не определен';
-
       const genderMap = {
         'Male': 'Мужской',
         'Female': 'Женский',
@@ -151,14 +194,13 @@ export default {
         'male': 'Мужской',
         'female': 'Женский'
       };
-
       return genderMap[gender] || gender;
     },
 
     formatAge(ageGroup) {
       if (!ageGroup) return 'Не определен';
+      if (!isNaN(ageGroup)) return `${ageGroup} лет`;
 
-      // Обработка возрастных групп в формате (25-32)
       const ageMap = {
         '(0-2)': '0-2 года',
         '(4-6)': '4-6 лет',
@@ -169,29 +211,17 @@ export default {
         '(48-53)': '48-53 года',
         '(60-100)': '60+ лет'
       };
-
-      // Проверяем, есть ли группа в карте
-      if (ageMap.hasOwnProperty(ageGroup)) {
-        return ageMap[ageGroup];
-      }
-
-      // Если это число (или строка, которую можно преобразовать в число)
-      const ageNumber = parseFloat(ageGroup);
-      if (!isNaN(ageNumber) && isFinite(ageNumber)) {
-        return `${Math.round(ageNumber)} лет`; // Округляем на всякий случай
-      }
-
-      // Если ничего не подошло, возвращаем как есть или "Не определен"
-      return ageGroup || 'Не определен';
-    },
+      return ageMap[ageGroup] || ageGroup;
+    }
   }
 };
 </script>
 
 <style scoped>
-/* Ваши существующие стили остаются без изменений */
 .results-page {
   padding: 2rem;
+  min-height: 100vh;
+  background-color: #f8fafc;
 }
 
 .container {
@@ -215,6 +245,21 @@ export default {
   font-size: 1.1rem;
 }
 
+.error-message {
+  color: #ef4444;
+  background: #fee2e2;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+
+.loading-message {
+  color: #3b82f6;
+  text-align: center;
+  padding: 2rem;
+}
+
 .persons-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
@@ -235,23 +280,74 @@ export default {
 }
 
 .person-gallery {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.5rem;
+  padding: 1rem;
   background: #f8fafc;
 }
 
-.person-image {
-  width: calc(33.333% - 0.5rem);
-  height: 100px;
+.main-image-container {
+  margin-bottom: 1rem;
+}
+
+.person-main-image {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.person-main-image:hover {
+  transform: scale(1.03);
+}
+
+.additional-images {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 1rem;
+}
+
+.toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: none;
+  border: none;
+  color: #3b82f6;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0.5rem;
+  margin: 0 auto;
+  transition: color 0.2s;
+}
+
+.toggle-btn:hover {
+  color: #2563eb;
+}
+
+.toggle-btn svg {
+  transition: transform 0.3s ease;
+}
+
+.thumbnails-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 8px;
+  margin-top: 1rem;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 5px;
+}
+
+.person-thumbnail {
+  width: 100%;
+  height: 80px;
   object-fit: cover;
   border-radius: 4px;
   cursor: pointer;
   transition: transform 0.2s;
 }
 
-.person-image:hover {
+.person-thumbnail:hover {
   transform: scale(1.05);
 }
 
@@ -290,7 +386,6 @@ export default {
   color: #1e293b;
 }
 
-/* Стили для модального окна галереи */
 .image-gallery-modal {
   position: fixed;
   top: 0;
@@ -341,6 +436,7 @@ export default {
   gap: 0.5rem;
   overflow-x: auto;
   padding: 0.5rem;
+  max-width: 100%;
 }
 
 .gallery-thumbnails img {
